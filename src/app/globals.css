@@ -1,4 +1,3 @@
-@import "tailwindcss";
 :root { --ink:#34231b; --muted:#6e503e; --gold:#a76e35; }
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; }

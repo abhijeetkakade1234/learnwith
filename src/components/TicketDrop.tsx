@@ -35,7 +35,7 @@ type Step = { title: string; story: string; config: Config; next?: string };
 
 const base: Config = { servers: 1, lb: false, cache: false, fix: "none", showDb: false, checkout: false };
 const STEPS: Step[] = [
-  { title: "Ticket drop at 10:00", story: `${SEATS} seats. Fans will send ${DEMAND} requests/second the moment the sale opens.`, config: base, next: "Start the sale" },
+  { title: "You run the ticket site", story: `There are ${SEATS} seats and 50,000 fans waiting. When sales open, they will make ${DEMAND.toLocaleString("en-US")} requests each second. A request is one action, like refreshing the seat map. Keep the site working, then explain your choices in an interview.`, config: base, next: "Open ticket sales" },
   { title: "One server melts", story: `Think of a server as a cashier. This one can handle ${SERVER_CAP} requests each second, but ${DEMAND} arrive. The rest get errors.`, config: base, next: "Add a second server" },
   { title: "Two servers, still failing", story: "A second cashier is open, but everyone still joins line one. Nothing sends fans to the new server, so it sits idle.", config: { ...base, servers: 2 }, next: "Add a load balancer" },
   { title: "Load balancer spreads traffic", story: "A load balancer acts as a traffic director. It splits fans between the two servers, so neither is overwhelmed. Follow the requests downstream…", config: { ...base, servers: 2, lb: true }, next: "Check the database" },
@@ -97,6 +97,7 @@ export default function TicketDrop() {
           <span key={i} className={i <= step ? "td-dot td-dot-on" : "td-dot"} aria-hidden="true" />
         ))}
       </p>
+      <p className="td-step-count">STEP {String(step + 1).padStart(2, "0")} / {String(STEPS.length).padStart(2, "0")}</p>
       <h2 id="td-title" ref={headingRef} tabIndex={-1} className="td-title">
         {s.title}
       </h2>
@@ -250,6 +251,7 @@ const css = `
 .td-dot{display:block;height:3px;background:var(--rule)}
 .td-dot-on{background:var(--ink)}
 .td-dot-on:last-of-type,.td-dot-on:has(+ .td-dot:not(.td-dot-on)){background:var(--coral)}
+.td-step-count{font:700 .75rem/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.14em;margin:0 0 1.5rem;color:var(--mute)}
 .td-title{font-size:clamp(2.6rem,9vw,7.5rem);line-height:.9;letter-spacing:-.055em;font-weight:700;margin:0 0 clamp(1rem,3vw,2rem);max-width:14ch;outline:none;text-wrap:balance}
 .td-title:focus-visible{outline:3px solid var(--coral);outline-offset:8px}
 .td-story{font-size:clamp(1.05rem,1.8vw,1.45rem);line-height:1.45;letter-spacing:-.01em;color:var(--ink);max-width:46ch;min-height:3em;margin:0 0 clamp(2rem,5vw,4rem);padding-left:1rem;border-left:3px solid var(--coral)}

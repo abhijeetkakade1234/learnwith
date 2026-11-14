@@ -1,4 +1,4 @@
-import Lesson from "@/components/Lesson";
+import AvalancheLab from "@/components/AvalancheLab";
 import TicketDrop from "@/components/TicketDrop";
 import Link from "next/link";
 import type { Metadata } from "next";
@@ -13,6 +13,6 @@ export async function generateMetadata({ params }: { params: Promise<{ topic: st
 
 export default async function Page({ params }: { params: Promise<{ topic: string }> }) {
   const { topic } = await params;
-  if (topic === "avalanche") return <Lesson topic="avalanche" />;
-  return <main className="lab-page"><header className="lab-nav"><Link href="/" className="lab-logo">← LEARNWITH<span> / </span>ABHIJEET</Link><span>LESSON 01 / SYSTEM DESIGN</span></header><section className="lab-lesson-intro"><p>INTERACTIVE LESSON · ABOUT 4 MINUTES</p><h1>Save the ticket site.</h1><span>You run a ticket website. 50,000 fans are about to arrive. Try a fix, see what happens, then practise explaining your design.</span></section><section className="lab-experiment" aria-label="Interactive ticket drop lesson"><TicketDrop /></section></main>;
+  if (topic === "avalanche") return <main className="system-page"><header className="system-nav"><Link href="/">← LEARNWITH / ABHIJEET</Link><span>LESSON 02 / AVALANCHE</span></header><AvalancheLab /></main>;
+  return <main className="system-page"><header className="system-nav"><Link href="/">← LEARNWITH / ABHIJEET</Link><span>LESSON 01 / SYSTEM DESIGN</span></header><TicketDrop /></main>;
 }

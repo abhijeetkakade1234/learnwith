@@ -1,327 +1,83 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useState } from "react";
 
-/* Declared capacities — every number on screen derives from these. */
-const DEMAND = 2000; // fan requests/second when the sale opens
-const SERVER_CAP = 1200; // requests/second one app server can handle
-const DB_CAP = 800; // queries/second the database can handle
-const CHECKOUT_SHARE = 0.1; // share of requests that are checkouts (1 DB write each)
-const CACHE_HIT = 0.9; // share of seat-map reads answered by the cache
-const CACHE_TTL = 2; // seconds a cached seat map can be stale
-const SEATS = 500; // seats for sale
-const ADMIT = 100; // checkouts/second the waiting room lets through
-
-type Fix = "none" | "lock" | "queue";
-type Config = { servers: number; lb: boolean; cache: boolean; fix: Fix; showDb: boolean; checkout: boolean };
-
-function compute(c: Config) {
-  const webCap = c.lb ? c.servers * SERVER_CAP : SERVER_CAP; // no router: everyone hits server 1
-  const served = Math.min(DEMAND, webCap);
-  const perServer = c.lb ? served / c.servers : served;
-  const checkouts = served * CHECKOUT_SHARE;
-  const writes = c.fix === "queue" ? Math.min(checkouts, ADMIT) : checkouts;
-  const reads = (served - checkouts) * (c.cache ? 1 - CACHE_HIT : 1);
-  const dbLoad = reads + writes;
-  const dbOk = Math.min(1, DB_CAP / dbLoad);
-  const success = c.showDb ? (served / DEMAND) * dbOk : served / DEMAND;
-  const staleDecisions = c.cache && c.fix === "none" ? writes * CACHE_TTL : 0;
-  const sellOut = SEATS / (writes * (c.showDb ? dbOk : 1));
-  const queueGrowth = c.fix === "queue" ? checkouts - writes : 0;
-  return { webCap, served, perServer, checkouts, writes, reads, dbLoad, success, staleDecisions, sellOut, queueGrowth };
-}
-
-type Step = { title: string; story: string; config: Config; next?: string };
-
-const base: Config = { servers: 1, lb: false, cache: false, fix: "none", showDb: false, checkout: false };
-const STEPS: Step[] = [
-  { title: "You run the ticket site", story: `There are ${SEATS} seats and 50,000 fans waiting. When sales open, they will make ${DEMAND.toLocaleString("en-US")} requests each second. A request is one action, like refreshing the seat map. Keep the site working, then explain your choices in an interview.`, config: base, next: "Open ticket sales" },
-  { title: "One server melts", story: `Think of a server as a cashier. This one can handle ${SERVER_CAP} requests each second, but ${DEMAND} arrive. The rest get errors.`, config: base, next: "Add a second server" },
-  { title: "Two servers, still failing", story: "A second cashier is open, but everyone still joins line one. Nothing sends fans to the new server, so it sits idle.", config: { ...base, servers: 2 }, next: "Add a load balancer" },
-  { title: "Load balancer spreads traffic", story: "A load balancer acts as a traffic director. It splits fans between the two servers, so neither is overwhelmed. Follow the requests downstream…", config: { ...base, servers: 2, lb: true }, next: "Check the database" },
-  { title: "Database bottleneck", story: `The database is the seat ledger. Every page view asks it for the latest seat map, but it can answer only ${DB_CAP} questions each second.`, config: { ...base, servers: 2, lb: true, showDb: true }, next: "Add a cache" },
-  { title: "Cache absorbs reads", story: `A cache keeps a quick copy of the seat map. It answers ${CACHE_HIT * 100}% of reads, leaving fewer questions for the database.`, config: { ...base, servers: 2, lb: true, showDb: true, cache: true }, next: "Open checkout" },
-  { title: "Oversell risk", story: `That quick copy can be ${CACHE_TTL} seconds old. Two buyers may both see the same free seat. If checkout doesn't check the real ledger, both could be sold it.`, config: { ...base, servers: 2, lb: true, showDb: true, cache: true, checkout: true } },
-  { title: "Seat is safe", story: "", config: { ...base, servers: 2, lb: true, showDb: true, cache: true, checkout: true }, next: "Show interview answer" },
-  { title: "Interview answer", story: "", config: { ...base, servers: 2, lb: true, showDb: true, cache: true, checkout: true } },
+type Upgrade = "server" | "router" | "cache" | "lock";
+type Build = Record<Upgrade, boolean>;
+const DEMAND = 2000;
+const SERVER_CAPACITY = 1200;
+const DATABASE_CAPACITY = 1500;
+const empty: Build = { server: false, router: false, cache: false, lock: false };
+const options: { key: Upgrade; name: string; term: string; detail: string }[] = [
+  { key: "server", name: "Open a second server", term: "More capacity", detail: "Another place to handle requests" },
+  { key: "router", name: "Split incoming traffic", term: "Load balancer", detail: "Send fans to both servers" },
+  { key: "cache", name: "Keep a quick seat map", term: "Cache", detail: "Answer repeat views without asking the database" },
+  { key: "lock", name: "Check the real seat", term: "Conditional write", detail: "Let only one buyer claim it" },
 ];
 
-const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
-const pct = (n: number) => `${Math.round(n * 100)}%`;
-const tone = (load: number, cap: number) => (load > cap ? "td-bad" : load > cap * 0.8 ? "td-warn" : "td-ok");
+// ponytail: fixed capacities make the cause and effect teachable; add a real traffic model only when lessons need variable demand.
+function measure(build: Build) {
+  const webCapacity = build.server && build.router ? SERVER_CAPACITY * 2 : SERVER_CAPACITY;
+  const throughWeb = Math.min(DEMAND, webCapacity);
+  const dbPerRequest = build.cache ? 0.19 : 1; // 10% checkouts + 10% of the remaining 90% reads
+  const dbLoad = Math.round(throughWeb * dbPerRequest);
+  const delivered = Math.min(throughWeb, DATABASE_CAPACITY / dbPerRequest);
+  return { webCapacity, dbLoad, success: Math.round(delivered / DEMAND * 100) };
+}
+
+function fault(started: boolean, build: Build) {
+  if (!started) return { name: "The sale opens in 3… 2… 1…", detail: "50,000 fans are waiting. Each second, 2,000 of their actions hit your website.", tone: "idle" };
+  if (build.server && !build.router) return { name: "The new server is empty.", detail: "Everyone is still sent to the first server. How will traffic find the second one?", tone: "bad" };
+  if (!build.server || !build.router) return { name: "Fans are getting errors.", detail: "One server can handle 1,200 actions a second. 2,000 arrive. What would you change?", tone: "bad" };
+  if (!build.cache) return { name: "The bottleneck moved.", detail: "Both servers work now, but the seat database cannot answer every refresh.", tone: "warn" };
+  if (!build.lock) return { name: "Fast, but a seat can sell twice.", detail: "The quick seat map may be old. Two buyers could both think one seat is free.", tone: "warn" };
+  return { name: "Your ticket site holds up.", detail: "Every request gets through, and checkout gives each seat to just one buyer.", tone: "good" };
+}
 
 export default function TicketDrop() {
-  const [step, setStep] = useState(0);
-  const [fix, setFix] = useState<Fix>("none");
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const s = STEPS[step];
-  const cfg: Config = { ...s.config, fix: step >= 7 ? fix : "none" };
-  const m = compute(cfg);
-
-  useEffect(() => {
-    if (step > 0) headingRef.current?.focus();
-  }, [step]);
-
-  const go = (n: number) => setStep(Math.max(0, Math.min(STEPS.length - 1, n)));
-  const restart = () => {
-    setFix("none");
-    go(0);
-  };
-  const choose = (f: Fix) => {
-    setFix(f);
-    go(7);
-  };
-  const onKey = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key === "ArrowLeft" && step > 0) {
-      e.preventDefault();
-      go(step - 1);
-    } else if (e.key === "ArrowRight" && s.next) {
-      e.preventDefault();
-      go(step + 1);
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      restart();
-    }
-  };
-
-  const fixStory =
-    fix === "lock"
-      ? "At checkout, the real seat ledger checks whether the seat is still free and holds it in one indivisible action. Engineers call this an atomic conditional write. Only one buyer wins; unpaid holds expire."
-      : `A waiting room lets in ${ADMIT} buyers each second. Others wait instead of rushing checkout. The real seat ledger still gives each seat to only one buyer with a conditional write.`;
-
-  return (
-    <section className="td-root" aria-labelledby="td-title" onKeyDown={onKey}>
-      <style>{css}</style>
-      <p className="td-progress" aria-label={`Step ${step + 1} of ${STEPS.length}`}>
-        {STEPS.map((_, i) => (
-          <span key={i} className={i <= step ? "td-dot td-dot-on" : "td-dot"} aria-hidden="true" />
-        ))}
-      </p>
-      <p className="td-step-count">STEP {String(step + 1).padStart(2, "0")} / {String(STEPS.length).padStart(2, "0")}</p>
-      <h2 id="td-title" ref={headingRef} tabIndex={-1} className="td-title">
-        {s.title}
-      </h2>
-      <p className="td-story" aria-live="polite">
-        {step === 7 ? fixStory : s.story}
-      </p>
-
-      {step > 0 && step < 8 && <Diagram cfg={cfg} m={m} />}
-
-      {step > 0 && step < 8 && (
-        <dl className="td-metrics" aria-label="Live metrics">
-          <Metric label="Demand" value={`${fmt(DEMAND)} req/s`} />
-          <Metric label="Web capacity usable" value={`${fmt(m.webCap)} req/s`} cls={tone(DEMAND, m.webCap)} />
-          <Metric label={cfg.lb ? "Load per server" : "Load on server 1"} value={`${fmt(cfg.lb ? DEMAND / cfg.servers : DEMAND)} / ${fmt(SERVER_CAP)}`} cls={tone(cfg.lb ? DEMAND / cfg.servers : DEMAND, SERVER_CAP)} />
-          {cfg.showDb && <Metric label="DB load" value={`${fmt(m.dbLoad)} / ${fmt(DB_CAP)} q/s`} cls={tone(m.dbLoad, DB_CAP)} />}
-          <Metric label="Requests succeeding" value={pct(m.success)} cls={m.success < 1 ? "td-bad" : "td-ok"} />
-          {cfg.checkout && <Metric label="Checkouts on stale data" value={m.staleDecisions ? `up to ${fmt(m.staleDecisions)} per ${CACHE_TTL}s` : "0 — writes are conditional"} cls={m.staleDecisions ? "td-bad" : "td-ok"} />}
-          {cfg.checkout && cfg.fix !== "none" && <Metric label="Sells out in" value={`${m.sellOut.toFixed(1)} s`} />}
-          {cfg.fix === "queue" && <Metric label="Queue grows by" value={`${fmt(m.queueGrowth)} buyers/s`} cls="td-warn" />}
-        </dl>
-      )}
-
-      {step === 8 && <Summary fix={fix} />}
-
-      <div className="td-actions">
-        {step > 0 && (
-          <button type="button" className="td-btn td-ghost" onClick={() => go(step - 1)}>
-            Back
-          </button>
-        )}
-        {s.next && (
-          <button type="button" className="td-btn" onClick={() => go(step + 1)}>
-            {s.next}
-          </button>
-        )}
-        {step === 6 && (
-          <fieldset className="td-choice">
-            <legend>Choose a fix for overselling</legend>
-            <button type="button" className="td-btn" onClick={() => choose("lock")}>
-              Seat lock (conditional write)
-            </button>
-            <button type="button" className="td-btn" onClick={() => choose("queue")}>
-              Waiting room (admission queue)
-            </button>
-          </fieldset>
-        )}
-        {step === 8 && (
-          <button type="button" className="td-btn" onClick={restart}>
-            Restart lesson
-          </button>
-        )}
-      </div>
-      <p className="td-hint">Keyboard: Tab to buttons, Enter to press · ← back · → next · Home restart</p>
-    </section>
-  );
-}
-
-function Metric({ label, value, cls = "" }: { label: string; value: string; cls?: string }) {
-  return (
-    <div className={`td-metric ${cls}`}>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-}
-
-function Node({ x, y, label, sub, cls }: { x: number; y: number; label: string; sub: string; cls: string }) {
-  return (
-    <g className={`td-node ${cls}`}>
-      <rect x={x} y={y} width={110} height={48} rx={8} />
-      <text x={x + 55} y={y + 21} textAnchor="middle">{label}</text>
-      <text x={x + 55} y={y + 38} textAnchor="middle" className="td-sub">{sub}</text>
-    </g>
-  );
-}
-
-function Diagram({ cfg, m }: { cfg: Config; m: ReturnType<typeof compute> }) {
-  const servers = Array.from({ length: cfg.servers }, (_, i) => i);
-  const sy = (i: number) => (cfg.servers === 1 ? 86 : 40 + i * 92);
-  const webX = cfg.lb ? 280 : 160;
-  const loadOf = (i: number) => (cfg.lb ? DEMAND / cfg.servers : i === 0 ? DEMAND : 0);
-  const desc = `Fans send ${fmt(DEMAND)} req/s${cfg.lb ? " through a load balancer" : ""} to ${cfg.servers} server(s)${cfg.cache ? ", then a cache" : ""}${cfg.showDb ? `, then a database at ${fmt(m.dbLoad)} of ${fmt(DB_CAP)} q/s` : ""}.`;
-  return (
-    <>
-    <div className="td-mobile-flow" aria-label={desc}>
-      <div><strong>Fans</strong><span>{fmt(DEMAND)} req/s</span></div>
-      {cfg.lb && <div className="td-mobile-ok"><strong>Load balancer</strong><span>Splits traffic</span></div>}
-      {servers.map(i => <div key={i} className={loadOf(i) ? tone(loadOf(i), SERVER_CAP) : "td-mobile-idle"}><strong>Server {i + 1}</strong><span>{fmt(loadOf(i))} / {fmt(SERVER_CAP)} req/s</span></div>)}
-      {cfg.cache && <div className="td-mobile-ok"><strong>Cache</strong><span>{pct(CACHE_HIT)} of reads answered</span></div>}
-      {cfg.showDb && <div className={tone(m.dbLoad, DB_CAP)}><strong>Database</strong><span>{fmt(m.dbLoad)} / {fmt(DB_CAP)} q/s</span></div>}
-    </div>
-    <svg className="td-diagram" viewBox="0 0 680 220" role="img" aria-label={desc}>
-      <Node x={10} y={86} label="Fans" sub={`${fmt(DEMAND)} req/s`} cls="td-neutral" />
-      {cfg.lb && <Node x={150} y={86} label="Load balancer" sub="round robin" cls="td-ok" />}
-      {servers.map((i) => (
-        <g key={i}>
-          <line className={loadOf(i) ? "td-flow" : "td-idle"} x1={cfg.lb ? 260 : 120} y1={110} x2={webX} y2={sy(i) + 24} />
-          <Node x={webX} y={sy(i)} label={`Server ${i + 1}`} sub={`${fmt(loadOf(i))} / ${fmt(SERVER_CAP)}`} cls={loadOf(i) ? tone(loadOf(i), SERVER_CAP) : "td-neutral"} />
-        </g>
-      ))}
-      {cfg.cache && (
-        <>
-          <line className="td-flow" x1={webX + 110} y1={110} x2={420} y2={110} />
-          <Node x={420} y={86} label="Cache" sub={`${pct(CACHE_HIT)} hits`} cls="td-ok" />
-        </>
-      )}
-      {cfg.showDb && (
-        <>
-          <line className="td-flow" x1={cfg.cache ? 530 : webX + 110} y1={110} x2={560} y2={110} />
-          <Node x={560} y={86} label="Database" sub={`${fmt(m.dbLoad)} / ${fmt(DB_CAP)} q/s`} cls={tone(m.dbLoad, DB_CAP)} />
-        </>
-      )}
-    </svg>
-    </>
-  );
-}
-
-function Summary({ fix }: { fix: Fix }) {
+  const [started, setStarted] = useState(false);
+  const [build, setBuild] = useState<Build>(empty);
+  const [showAnswer, setShowAnswer] = useState(false);
   const [answer, setAnswer] = useState("");
-  const one = compute({ ...base });
-  const lbM = compute({ ...base, servers: 2, lb: true, showDb: true });
-  const cached = compute({ ...base, servers: 2, lb: true, showDb: true, cache: true, checkout: true, fix });
-  return (
-    <div className="td-summary">
-      <p>
-        <strong>“How would you design a ticket drop?”</strong>
-      </p>
-      <ol>
-        <li>Estimate: {fmt(DEMAND)} req/s peak against {fmt(SERVER_CAP)} req/s per server, so one server serves only {pct(one.success)}.</li>
-        <li>Scale horizontally to 2 servers behind a load balancer: {fmt(lbM.perServer)} req/s each, under capacity. Extra servers without routing do nothing.</li>
-        <li>The DB then sees {fmt(lbM.dbLoad)} q/s vs {fmt(DB_CAP)} capacity. A seat-map cache with {pct(CACHE_HIT)} hit rate cuts it to {fmt(cached.dbLoad)} q/s.</li>
-        <li>Cached reads can be stale, so correctness lives in the DB: {fix === "lock" ? "a conditional write (seat lock with hold TTL) guarantees one winner per seat" : `a waiting room admits ${ADMIT} checkouts/s, and admitted buyers claim seats with a conditional write`}.</li>
-        <li>Trade-off: {fix === "lock" ? `fastest sell-out (${cached.sellOut.toFixed(1)}s), but losers see “seat taken” errors.` : `fairer and gentler on the DB (${fmt(cached.dbLoad)} q/s), but buyers wait; the queue grows ${fmt(cached.queueGrowth)}/s and seats sell out in ${cached.sellOut.toFixed(1)}s.`}</li>
-      </ol>
-      <div className="td-practice">
-        <label htmlFor="td-answer">Now explain it in your own words. How would you keep the ticket drop alive?</label>
-        <textarea id="td-answer" value={answer} onChange={e => setAnswer(e.target.value)} placeholder="I would first estimate peak traffic…" rows={5} />
-        <p>Use these as a self-check, not a score:</p>
-        <ul>
-          <li>What breaks first, and why?</li><li>Why does the second server need a load balancer?</li><li>What does the cache help, and what can go wrong?</li><li>How does your {fix === "lock" ? "seat lock" : "waiting room"} protect a seat?</li>
-        </ul>
+  const status = fault(started, build);
+  const stats = measure(build);
+  const complete = Object.values(build).every(Boolean);
+  const add = (key: Upgrade) => setBuild(current => ({ ...current, [key]: true }));
+  const reset = () => { setStarted(false); setBuild(empty); setShowAnswer(false); setAnswer(""); };
+
+  return <section className="control-room" aria-label="Ticket site simulation">
+    <style>{css}</style>
+    <div className="cr-topline"><span>01 / SYSTEM DESIGN</span><span>INTERACTIVE CASE STUDY · 4 MIN</span></div>
+    <div className="cr-heading"><div><p className="cr-eyebrow">YOU ARE ON CALL</p><h1>Keep the ticket site alive.</h1></div><p>Open sales. Watch what fails. Change the system until fans can buy a seat safely.</p></div>
+    {showAnswer ? <div className="cr-answer"><div><p className="cr-eyebrow">INTERVIEW PRACTICE</p><h2>Now explain your design.</h2><p>Question: “How would you handle a huge ticket drop?” Try answering in one minute.</p><ol><li>Start with demand: 2,000 actions each second.</li><li>Explain why a second server also needs traffic routing.</li><li>Describe how a cache removes repeat seat-map reads.</li><li>Say why the database must check the real seat at checkout.</li></ol></div><div><label htmlFor="cr-response">Your answer, in your own words</label><textarea id="cr-response" rows={7} value={answer} onChange={event => setAnswer(event.target.value)} placeholder="I would first estimate how many requests arrive…" /><button type="button" onClick={() => setShowAnswer(false)}>← Back to your system</button></div></div> : <div className="cr-workspace">
+      <div className="cr-visual"><div className={`cr-alert cr-${status.tone}`} role="status"><span className="cr-alert-light" /><div><strong>{status.name}</strong><p>{status.detail}</p></div></div>
+        <div className="cr-flow" aria-label="Traffic flows from fans through routing, servers, a seat-map cache, and the database">
+          <FlowNode label="FANS" value="2,000 / sec" state={started ? "active" : "idle"} icon="◎" />
+          <span className="cr-wire" aria-hidden="true">→</span>
+          <FlowNode label="TRAFFIC ROUTING" value={build.router ? "ON" : "MISSING"} state={build.router ? "good" : "idle"} icon="◇" />
+          <span className="cr-wire" aria-hidden="true">→</span>
+          <div className="cr-servers"><FlowNode label="SERVER 01" value={`${Math.min(DEMAND, build.router && build.server ? 1000 : DEMAND)} / 1,200`} state={started && (!build.server || !build.router) ? "bad" : started ? "good" : "idle"} icon="▣" /><FlowNode label="SERVER 02" value={build.server ? build.router ? "1,000 / 1,200" : "IDLE" : "NOT ADDED"} state={build.server ? build.router ? "good" : "warn" : "idle"} icon="▣" /></div>
+          <span className="cr-wire" aria-hidden="true">→</span>
+          <FlowNode label="SEAT-MAP COPY" value={build.cache ? "90% reads" : "MISSING"} state={build.cache ? "good" : "idle"} icon="▤" />
+          <span className="cr-wire" aria-hidden="true">→</span>
+          <FlowNode label="DATABASE" value={`${stats.dbLoad} / 1,500`} state={started && stats.dbLoad > DATABASE_CAPACITY ? "bad" : started ? "good" : "idle"} icon="▥" />
+        </div>
+        <div className="cr-readout"><div><span>FANS GETTING THROUGH</span><strong className={started && stats.success < 100 ? "cr-number-bad" : ""}>{started ? `${stats.success}%` : "—"}</strong></div><div><span>DATABASE WORK</span><strong>{started ? `${stats.dbLoad} / 1,500` : "—"}</strong></div><div><span>SEATS PROTECTED</span><strong>{started ? build.lock ? "YES" : "NO" : "—"}</strong></div></div>
+        <p className="cr-model">Simplified model: 2,000 actions/sec · each server handles 1,200 · database handles 1,500 · a cache answers 90% of seat-map reads.</p>
       </div>
-    </div>
-  );
+      <aside className="cr-controls"><div className="cr-control-head"><span>YOUR CONTROLS</span><span>{Object.values(build).filter(Boolean).length} / 4 FIXES</span></div>{!started ? <div className="cr-start"><span aria-hidden="true">↗</span><p>First, see what happens when all 50,000 fans rush in.</p><button type="button" onClick={() => setStarted(true)}>OPEN TICKET SALES →</button></div> : <><div className="cr-upgrades">{options.map((option, index) => <button key={option.key} type="button" className={build[option.key] ? "cr-upgrade cr-installed" : "cr-upgrade"} onClick={() => add(option.key)} disabled={build[option.key]}><span className="cr-upgrade-index">0{index + 1}</span><span><strong>{option.name}</strong><small>{option.term} · {option.detail}</small></span><span aria-hidden="true">{build[option.key] ? "✓" : "+"}</span></button>)}</div>{complete && <button type="button" className="cr-interview" onClick={() => setShowAnswer(true)}>PRACTISE YOUR INTERVIEW ANSWER →</button>}<button type="button" className="cr-reset" onClick={reset}>Reset the system</button></>}</aside>
+    </div>}
+  </section>;
+}
+
+function FlowNode({ label, value, state, icon }: { label: string; value: string; state: "idle" | "active" | "good" | "bad" | "warn"; icon: string }) {
+  return <div className={`cr-node cr-node-${state}`}><span className="cr-node-icon" aria-hidden="true">{icon}</span><span className="cr-node-label">{label}</span><strong>{value}</strong></div>;
 }
 
 const css = `
-.td-root{--ink:#0b0f10;--paper:#f2f0e9;--coral:#ff624d;--lime:#c8f85a;--rule:rgba(11,15,16,.14);--mute:#4a4f50;position:relative;width:100%;max-width:none;margin:0;padding:clamp(1.25rem,5vw,5rem) clamp(1rem,6vw,6rem);box-sizing:border-box;background-color:var(--paper);background-image:linear-gradient(var(--rule) 1px,transparent 1px),linear-gradient(90deg,var(--rule) 1px,transparent 1px),linear-gradient(rgba(11,15,16,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(11,15,16,.05) 1px,transparent 1px);background-size:96px 96px,96px 96px,24px 24px,24px 24px;background-position:-1px -1px;color:var(--ink);font-family:"Inter","Helvetica Neue",Helvetica,Arial,system-ui,sans-serif;font-feature-settings:"tnum" 1,"ss01" 1;-webkit-font-smoothing:antialiased;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}
-.td-root *{box-sizing:border-box}
-.td-progress{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;margin:0 0 clamp(2rem,6vw,4.5rem);max-width:640px}
-.td-dot{display:block;height:3px;background:var(--rule)}
-.td-dot-on{background:var(--ink)}
-.td-dot-on:last-of-type,.td-dot-on:has(+ .td-dot:not(.td-dot-on)){background:var(--coral)}
-.td-step-count{font:700 .75rem/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.14em;margin:0 0 1.5rem;color:var(--mute)}
-.td-title{font-size:clamp(2.6rem,9vw,7.5rem);line-height:.9;letter-spacing:-.055em;font-weight:700;margin:0 0 clamp(1rem,3vw,2rem);max-width:14ch;outline:none;text-wrap:balance}
-.td-title:focus-visible{outline:3px solid var(--coral);outline-offset:8px}
-.td-story{font-size:clamp(1.05rem,1.8vw,1.45rem);line-height:1.45;letter-spacing:-.01em;color:var(--ink);max-width:46ch;min-height:3em;margin:0 0 clamp(2rem,5vw,4rem);padding-left:1rem;border-left:3px solid var(--coral)}
-.td-diagram{display:block;width:calc(100% + 2 * clamp(1rem,6vw,6rem));max-width:none;height:auto;margin:0 calc(-1 * clamp(1rem,6vw,6rem));padding:clamp(1rem,4vw,3.5rem) clamp(.5rem,5vw,5rem);background-color:var(--ink);background-image:linear-gradient(rgba(242,240,233,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(242,240,233,.07) 1px,transparent 1px);background-size:32px 32px;overflow:visible}
-.td-node rect{fill:var(--ink);stroke:var(--paper);stroke-width:1.25;rx:0;ry:0}
-.td-node text{fill:var(--paper);font-size:12.5px;font-weight:600;letter-spacing:-.01em}
-.td-node .td-sub{font-size:10.5px;font-weight:400;fill:rgba(242,240,233,.78);font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
-.td-node.td-ok rect{stroke:var(--lime);stroke-width:2}
-.td-node.td-warn rect{stroke:var(--paper);stroke-width:2;stroke-dasharray:4 3}
-.td-node.td-bad rect{fill:var(--coral);stroke:var(--coral);stroke-width:2}
-.td-node.td-bad text,.td-node.td-bad .td-sub{fill:var(--ink)}
-.td-node.td-neutral rect{stroke:rgba(242,240,233,.55)}
-.td-flow{stroke:var(--lime);stroke-width:1.5;stroke-dasharray:2 6;stroke-linecap:round;animation:td-dash 1.2s linear infinite}
-.td-idle{stroke:rgba(242,240,233,.3);stroke-width:1;stroke-dasharray:1 5}
-@keyframes td-dash{to{stroke-dashoffset:-16}}
-.td-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:0;margin:clamp(2rem,5vw,4rem) 0 0;border-top:1px solid var(--ink);border-left:1px solid var(--ink)}
-.td-metric{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:1.75rem;min-height:clamp(9rem,16vw,12rem);padding:1.1rem 1.25rem 1.25rem;background:var(--paper);border-right:1px solid var(--ink);border-bottom:1px solid var(--ink)}
-.td-metric::before{content:"";position:absolute;top:0;left:0;width:2.5rem;height:4px;background:var(--ink)}
-.td-metric dt{font-size:.72rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
-.td-metric dd{margin:0;font-size:clamp(2rem,4.2vw,3.6rem);line-height:.95;font-weight:700;letter-spacing:-.045em;color:var(--ink)}
-.td-metric.td-ok::before{background:var(--lime);width:100%}
-.td-metric.td-warn::before{width:100%;background:repeating-linear-gradient(90deg,var(--ink) 0 8px,transparent 8px 12px)}
-.td-metric.td-bad{background:var(--coral)}
-.td-metric.td-bad dt{color:var(--ink)}
-.td-metric.td-bad::before{background:var(--ink);width:100%}
-.td-actions{display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end;margin-top:clamp(2.5rem,6vw,5rem);padding-top:1.5rem;border-top:1px solid var(--ink)}
-.td-btn{appearance:none;display:inline-flex;align-items:center;gap:.9rem;min-height:3.25rem;padding:.9rem 1.5rem;background:var(--ink);color:var(--paper);border:1px solid var(--ink);border-radius:0;font:inherit;font-size:1rem;font-weight:600;letter-spacing:-.01em;cursor:pointer;transition:background-color .18s ease,color .18s ease}
-.td-btn::after{content:"→";font-weight:400;transition:transform .18s ease}
-.td-btn:hover{background:var(--coral);color:var(--ink);border-color:var(--ink)}
-.td-btn:hover::after{transform:translateX(4px)}
-.td-btn:active{background:var(--lime)}
-.td-btn:focus-visible{outline:3px solid var(--coral);outline-offset:3px}
-.td-ghost{background:transparent;color:var(--ink)}
-.td-ghost::after{content:none}
-.td-ghost::before{content:"←";font-weight:400}
-.td-ghost:hover{background:var(--ink);color:var(--paper)}
-.td-choice{display:flex;flex-wrap:wrap;gap:.75rem;width:100%;margin:1rem 0 0;padding:1.5rem 0 0;border:0;border-top:1px dashed var(--ink)}
-.td-choice legend{float:left;width:100%;margin-bottom:1rem;padding:0;font-size:.72rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
-.td-choice .td-btn{flex:1 1 260px;justify-content:space-between;background:var(--paper);color:var(--ink)}
-.td-choice .td-btn:hover{background:var(--lime)}
-.td-summary{margin-top:clamp(1rem,3vw,2rem);border-top:1px solid var(--ink)}
-.td-summary>p{font-size:clamp(1.4rem,3vw,2.4rem);line-height:1.1;letter-spacing:-.03em;margin:1.5rem 0 2rem;max-width:22ch}
-.td-summary ol{list-style:none;counter-reset:td;margin:0;padding:0}
-.td-summary ol>li{counter-increment:td;display:grid;grid-template-columns:clamp(3rem,10vw,7rem) 1fr;gap:1rem;align-items:baseline;padding:1.25rem 0;border-bottom:1px solid var(--rule);font-size:clamp(1rem,1.5vw,1.2rem);line-height:1.5;max-width:68rem}
-.td-summary ol>li::before{content:counter(td,decimal-leading-zero);font-size:clamp(2rem,5vw,3.75rem);font-weight:700;letter-spacing:-.05em;line-height:1;color:var(--ink)}
-.td-summary ol>li:last-child::before{color:var(--coral);-webkit-text-stroke:1px var(--ink)}
-.td-practice{max-width:68rem;margin:4rem 0 0;padding:2rem;background:var(--ink);color:var(--paper)}
-.td-practice label{display:block;max-width:28ch;font-size:clamp(1.5rem,3vw,2.5rem);font-weight:700;line-height:1.1;letter-spacing:-.04em;margin-bottom:1.5rem}
-.td-practice textarea{display:block;width:100%;resize:vertical;background:var(--paper);color:var(--ink);border:2px solid var(--lime);border-radius:0;padding:1rem;font:inherit;line-height:1.5}
-.td-practice textarea:focus-visible{outline:3px solid var(--coral);outline-offset:4px}
-.td-practice p{margin:1.5rem 0 .5rem;color:var(--lime);font-weight:700}.td-practice ul{margin:0;padding-left:1.2rem;line-height:1.6}
-.td-hint{margin:1.5rem 0 0;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.75rem;letter-spacing:.02em;color:var(--mute)}
-.td-mobile-flow{display:none}
-@media (max-width:640px){
-.td-title{letter-spacing:-.045em;max-width:none}
-.td-story{padding-left:.75rem}
-.td-diagram{display:none}
-.td-mobile-flow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px;margin:0 calc(-1 * clamp(1rem,6vw,6rem));padding:20px;background:var(--ink);color:var(--paper)}
-.td-mobile-flow>div{min-height:84px;border:1px solid #f2f0e955;padding:12px;display:flex;flex-direction:column;justify-content:space-between;gap:8px}
-.td-mobile-flow strong{font-size:14px;line-height:1.1}.td-mobile-flow span{font:11px/1.2 ui-monospace,monospace}
-.td-mobile-flow .td-bad{background:var(--coral);color:var(--ink);border-color:var(--coral)}.td-mobile-flow .td-ok,.td-mobile-flow .td-mobile-ok{border-color:var(--lime)}.td-mobile-flow .td-mobile-idle{opacity:.45}
-.td-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-.td-metric{min-height:7.5rem;gap:1rem;padding:.8rem}
-.td-metric dd{font-size:clamp(1.15rem,5vw,1.75rem);overflow-wrap:anywhere}
-.td-metric dt{font-size:.62rem}
-.td-actions{flex-direction:column;align-items:stretch}
-.td-btn{width:100%;justify-content:space-between}
-.td-ghost{justify-content:flex-start}
-.td-summary ol>li{grid-template-columns:2.75rem 1fr;gap:.75rem}
-}
-@media (prefers-reduced-motion:reduce){.td-flow{animation:none;stroke-dasharray:none}.td-btn,.td-btn::after{transition:none}.td-btn:hover::after{transform:none}}
-@media (forced-colors:active){.td-btn{border:1px solid ButtonText}.td-metric.td-bad{outline:2px solid Highlight}}
+.control-room{--base:#0c1623;--panel:#101e2f;--line:#304256;--cream:#f0eadc;--muted:#a6b6c3;--amber:#f3ba62;--blue:#8ad4e0;--red:#e97666;min-height:calc(100dvh - 66px);display:flex;flex-direction:column;gap:clamp(16px,2.4vh,28px);padding:clamp(18px,3vh,34px) clamp(20px,3.5vw,54px) clamp(20px,3vh,34px);color:var(--cream);background:radial-gradient(circle at 57% 55%,#1e344a 0%,var(--base) 60%);font-family:Arial,"Helvetica Neue",sans-serif}
+.control-room *{box-sizing:border-box}.cr-topline,.cr-eyebrow,.cr-control-head,.cr-node-label,.cr-readout span,.cr-model{font:700 10px/1.3 ui-monospace,Consolas,monospace;letter-spacing:.12em}.cr-topline{display:flex;justify-content:space-between;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:14px}.cr-heading{display:flex;justify-content:space-between;gap:28px;align-items:end}.cr-eyebrow{color:var(--amber);margin:0 0 8px}.cr-heading h1{font:700 clamp(36px,4.2vw,62px)/.92 Arial,sans-serif;letter-spacing:-.065em;margin:0;max-width:none}.cr-heading>p{max-width:26ch;color:var(--muted);font-size:clamp(14px,1.2vw,17px);line-height:1.35;margin:0 0 2px}.cr-workspace{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(290px,.65fr);border:1px solid var(--line);background:#0d1b2b}.cr-visual{min-width:0;display:flex;flex-direction:column;justify-content:space-between;border-right:1px solid var(--line);background-image:linear-gradient(#b9d0e608 1px,transparent 1px),linear-gradient(90deg,#b9d0e608 1px,transparent 1px);background-size:30px 30px}.cr-alert{display:flex;gap:14px;align-items:start;padding:clamp(16px,2vw,25px);border-bottom:1px solid var(--line);min-height:92px}.cr-alert-light{flex:none;width:11px;height:11px;margin-top:5px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 5px #a6b6c320}.cr-alert-bad .cr-alert-light{background:var(--red);box-shadow:0 0 0 5px #e9766623}.cr-alert-warn .cr-alert-light{background:var(--amber);box-shadow:0 0 0 5px #f3ba6223}.cr-alert-good .cr-alert-light{background:var(--blue);box-shadow:0 0 0 5px #8ad4e023}.cr-alert strong{display:block;font-size:clamp(20px,1.8vw,27px);line-height:1.05;letter-spacing:-.04em}.cr-alert p{color:var(--muted);font-size:14px;line-height:1.3;margin:7px 0 0;max-width:62ch}.cr-flow{display:flex;align-items:center;justify-content:center;gap:clamp(3px,.6vw,10px);padding:clamp(18px,3vw,42px) clamp(12px,2vw,28px);min-height:190px}.cr-wire{color:var(--blue);font:700 clamp(13px,1.7vw,22px)/1 ui-monospace,monospace;opacity:.7}.cr-node{flex:1;min-width:0;min-height:120px;max-width:145px;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:6px;padding:12px;background:#142539;border:1px solid var(--line);transition:border-color .2s,background .2s}.cr-node-icon{font-size:28px;line-height:1;color:var(--muted)}.cr-node-label{color:var(--muted);font-size:9px;letter-spacing:.04em}.cr-node strong{font:700 clamp(10px,1vw,13px)/1.15 ui-monospace,Consolas,monospace;white-space:nowrap}.cr-node-good{border-color:var(--blue)}.cr-node-good .cr-node-icon{color:var(--blue)}.cr-node-bad{border-color:var(--red);background:#512b33}.cr-node-bad .cr-node-icon{color:var(--red)}.cr-node-warn{border-color:var(--amber)}.cr-node-active{border-color:var(--cream)}.cr-servers{flex:1;max-width:145px;display:grid;gap:6px}.cr-servers .cr-node{min-height:68px;max-width:none}.cr-servers .cr-node-icon{display:none}.cr-readout{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.cr-readout>div{display:flex;flex-direction:column;justify-content:space-between;min-height:102px;padding:16px;border-right:1px solid var(--line)}.cr-readout>div:last-child{border-right:0}.cr-readout span{color:var(--muted);font-size:9px}.cr-readout strong{font:700 clamp(22px,3vw,42px)/1 ui-monospace,Consolas,monospace;color:var(--blue)}.cr-readout .cr-number-bad{color:var(--red)}.cr-model{color:#71899e;font-size:9px;letter-spacing:0;padding:13px 18px;margin:0}.cr-controls{min-width:0;display:flex;flex-direction:column}.cr-control-head{display:flex;justify-content:space-between;gap:8px;color:var(--muted);padding:19px 20px;border-bottom:1px solid var(--line)}.cr-start{display:flex;flex:1;flex-direction:column;justify-content:center;align-items:start;gap:20px;padding:30px}.cr-start>span{font:400 80px/1 Arial,sans-serif;color:var(--amber)}.cr-start p{font-size:25px;font-weight:700;line-height:1.05;letter-spacing:-.04em;max-width:17ch}.cr-start button,.cr-interview{width:100%;min-height:54px;padding:14px 18px;border:0;background:var(--amber);color:var(--base);font:800 12px/1.2 Arial,sans-serif;letter-spacing:.07em;text-align:left;cursor:pointer}.cr-start button:hover,.cr-interview:hover{background:#fbd194}.cr-upgrades{display:grid;flex:1;grid-template-rows:repeat(4,1fr)}.cr-upgrade{width:100%;display:grid;grid-template-columns:28px 1fr 18px;gap:12px;align-items:center;padding:10px 18px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--cream);text-align:left;cursor:pointer}.cr-upgrade:hover:not(:disabled){background:#1e354c}.cr-upgrade-index{color:var(--amber);font:700 11px ui-monospace,monospace}.cr-upgrade strong{display:block;font-size:16px;letter-spacing:-.02em}.cr-upgrade small{display:block;color:var(--muted);font-size:11px;line-height:1.25;margin-top:3px}.cr-upgrade>span:last-child{color:var(--amber);font-size:20px}.cr-installed{opacity:.57;cursor:default}.cr-installed>span:last-child{color:var(--blue)}.cr-interview{margin:18px auto;width:calc(100% - 36px);background:var(--blue)}.cr-reset{align-self:start;margin:9px 18px;padding:4px 0;border:0;border-bottom:1px solid var(--muted);background:transparent;color:var(--muted);font-size:12px;cursor:pointer}.control-room button:focus-visible,.cr-answer textarea:focus-visible{outline:3px solid var(--amber);outline-offset:3px}.cr-answer{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,4vw,64px);padding:clamp(24px,4vw,60px);border:1px solid var(--line);background:#101e2f}.cr-answer h2{font-size:clamp(36px,4vw,58px);letter-spacing:-.06em;line-height:.95;margin:0 0 18px}.cr-answer p,.cr-answer li{color:var(--muted);line-height:1.4}.cr-answer ol{padding-left:22px}.cr-answer li{margin-bottom:10px}.cr-answer label{display:block;margin-bottom:12px;font-weight:700}.cr-answer textarea{width:100%;resize:vertical;background:#0c1623;color:var(--cream);border:1px solid var(--line);padding:16px;font:16px/1.5 Arial,sans-serif}.cr-answer button{display:block;margin-top:16px;background:transparent;color:var(--amber);border:0;border-bottom:1px solid var(--amber);padding:8px 0;cursor:pointer}
+@media(max-width:900px){.control-room{gap:14px;padding:18px}.cr-heading h1{font-size:clamp(32px,6vw,52px)}.cr-workspace{grid-template-columns:1fr}.cr-visual{border-right:0;border-bottom:1px solid var(--line)}.cr-flow{min-height:170px}.cr-controls{min-height:240px}.cr-upgrades{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr)}.cr-upgrade{border-right:1px solid var(--line)}.cr-start{padding:22px;gap:12px}.cr-start>span{display:none}.cr-start p{font-size:18px;max-width:none;margin:0}.cr-answer{grid-template-columns:1fr}}
+@media(max-width:600px){.control-room{min-height:calc(100dvh - 56px);padding:14px 12px;gap:11px}.cr-topline{font-size:8px;padding-bottom:10px}.cr-heading{display:block}.cr-heading h1{font-size:32px;max-width:none}.cr-heading>p{font-size:12px;max-width:none;margin-top:8px}.cr-workspace{min-height:0}.cr-alert{min-height:82px;padding:12px;gap:9px}.cr-alert strong{font-size:17px}.cr-alert p{font-size:11px;margin-top:4px}.cr-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));min-height:0;padding:10px;gap:5px}.cr-wire{display:none}.cr-node{width:100%;max-width:none;min-height:56px;padding:7px;gap:3px}.cr-node-icon{display:none}.cr-node-label{font-size:9px;line-height:1.1}.cr-node strong{font-size:10px;white-space:normal;overflow-wrap:anywhere}.cr-servers{max-width:none;gap:3px}.cr-servers .cr-node{min-height:44px}.cr-readout>div{min-height:68px;padding:8px}.cr-readout span{font-size:7px;letter-spacing:0}.cr-readout strong{font-size:19px}.cr-model{font-size:7px;line-height:1.2;padding:7px 10px}.cr-control-head{padding:10px 12px;font-size:8px}.cr-upgrades{grid-template-columns:repeat(2,1fr)}.cr-upgrade{grid-template-columns:16px 1fr 11px;gap:4px;padding:9px 8px}.cr-upgrade-index{font-size:8px}.cr-upgrade strong{font-size:11px}.cr-upgrade small{font-size:8px;margin-top:3px}.cr-upgrade>span:last-child{font-size:14px}.cr-reset{margin:7px 12px;font-size:10px}.cr-start{padding:13px}.cr-start p{font-size:15px}.cr-start button{min-height:44px}.cr-interview{margin:8px auto;min-height:42px;font-size:10px}.cr-answer{padding:18px}.cr-answer h2{font-size:32px}.cr-answer p,.cr-answer li{font-size:13px}}
+@media(prefers-reduced-motion:reduce){.cr-node{transition:none}}
 `;

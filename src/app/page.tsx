@@ -1,15 +1,11 @@
 import Link from "next/link";
 
 export default function Home() {
-  return <main className="hub">
-    <header className="hub-nav"><Link href="/" className="hub-brand">LEARNWITH<span> / </span>ABHIJEET</Link><span>LEARN BY DOING</span></header>
-    <section className="hub-main" aria-labelledby="hub-title">
-      <div className="hub-intro"><p className="hub-eyebrow"><span /> CURIOUS MINDS START HERE</p><h1 id="hub-title">Learn it.<br /><em>Explain it.</em></h1><p>Short, interactive lessons that turn difficult tech ideas into something you can see, try, and talk about in an interview.</p></div>
-      <div className="hub-topics" aria-label="Choose a topic">
-        <Link className="hub-topic hub-topic-live" href="/learn/system-design"><span className="hub-topic-top"><span>01 / SYSTEM DESIGN</span><span>START HERE ↗</span></span><span className="hub-topic-name">Save the<br />ticket site.</span><span className="hub-topic-bottom"><span>Traffic surges. Servers fail. Your decisions change what happens.</span><span>PLAY THE LESSON <b aria-hidden="true">↗</b></span></span></Link>
-        <Link className="hub-topic hub-topic-alt" href="/learn/avalanche"><span className="hub-topic-top"><span>02 / AVALANCHE BLOCKCHAIN</span><span>EARLY LESSON ↗</span></span><span className="hub-topic-name">Follow a<br />transaction.</span><span className="hub-topic-bottom"><span>See how a wallet, network, and validators work together.</span><span>EXPLORE THE LESSON <b aria-hidden="true">↗</b></span></span></Link>
-      </div>
+  return <main className="front">
+    <header className="front-nav"><Link href="/" className="front-brand">LEARNWITH<span> / </span>ABHIJEET</Link><span>INTERACTIVE TECH LESSONS</span><span className="front-free">NO ACCOUNT NEEDED</span></header>
+    <section className="front-stage" aria-labelledby="front-title"><div className="front-copy"><p className="front-eyebrow"><span /> LEARN BY DOING</p><h1 id="front-title">See what<br />breaks.<br /><em>Make it work.</em></h1><p>Complex tech gets easier when you can change it. Run a system, watch the consequences, and practise explaining your decisions in an interview.</p><Link className="front-cta" href="/learn/system-design">START WITH SYSTEM DESIGN <span aria-hidden="true">↗</span></Link></div>
+      <div className="front-preview" aria-label="Preview of the ticket site system"><div className="front-preview-head"><span>LIVE SCENARIO / 01</span><span><i /> SYSTEM UNDER LOAD</span></div><div className="front-preview-title"><span>THE TICKET DROP</span><strong>50,000 fans.<br />One small server.</strong></div><div className="front-preview-flow" aria-hidden="true"><div><span>◌</span><small>FANS</small><strong>2,000/s</strong></div><b>····→</b><div className="front-preview-fail"><span>▣</span><small>SERVER</small><strong>1,200/s</strong></div><b>····→</b><div><span>▥</span><small>SEATS</small><strong>500</strong></div></div><div className="front-preview-footer"><span>ONLY 60% GET THROUGH</span><span>WHAT WOULD YOU CHANGE? ↗</span></div></div>
     </section>
-    <footer className="hub-footer"><span>NO ACCOUNT NEEDED</span><span>FROM A REEL TO A REAL UNDERSTANDING.</span></footer>
+    <nav className="front-topics" aria-label="Choose a lesson"><Link href="/learn/system-design"><span>01</span><strong>System design</strong><small>SAVE THE TICKET SITE</small><b aria-hidden="true">↗</b></Link><Link href="/learn/avalanche"><span>02</span><strong>Avalanche blockchain</strong><small>EARLY LESSON · FOLLOW A TRANSACTION</small><b aria-hidden="true">↗</b></Link></nav>
   </main>;
 }

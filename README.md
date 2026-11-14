@@ -1,6 +1,6 @@
 # Learnwith
 
-An interactive, installable learning notebook for system design and Avalanche blockchain.
+An interactive, installable learning site for system design and Avalanche blockchain. Each lesson puts a small system under the learner's control and ends with interview practice.
 
 ## Run locally
 

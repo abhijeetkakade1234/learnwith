@@ -45,7 +45,7 @@ export default function Lesson({ topic }: { topic: keyof typeof lessons }) {
     </nav>
     <article className="lesson-guide">
       <section className="lesson-visual" aria-label="Interactive 3D diagram">
-        <SpellbookScene topic={topic === "avalanche" ? "avalanche" : "system"} onSelect={setPart} variant="lesson" />
+        <SpellbookScene topic={topic === "avalanche" ? "avalanche" : "system"} active={part} onSelect={setPart} variant="lesson" />
         <div className="lesson-plate" aria-hidden="true"><span>Plate {part + 1} of {total}</span><strong>{name}</strong></div>
         <p className="lesson-hint">Tap the floating objects to explore each step</p>
       </section>

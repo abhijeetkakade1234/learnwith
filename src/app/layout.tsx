@@ -3,12 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://learnwith.abhijeetkakade.in"),
-  title: { default: "Learn System Design by Saving a Ticket Site | Learnwith", template: "%s | Learnwith" },
-  description: "Learn system design by running a ticket-drop simulation. Break the system, fix its bottlenecks, and practise an interview answer. No account needed.",
+  title: { default: "Learnwith | Interactive Tech Lessons", template: "%s | Learnwith" },
+  description: "Understand system design and Avalanche blockchain through short interactive lessons, then practise explaining what you learned. No account needed.",
   manifest: "/manifest.webmanifest",
   alternates: { canonical: "/" },
-  openGraph: { title: "Learn System Design by Saving a Ticket Site | Learnwith", description: "A playable system design lesson: save a ticket site and explain your decisions.", url: "/", siteName: "Learnwith", type: "website" },
-  twitter: { card: "summary", title: "Learn System Design by Saving a Ticket Site | Learnwith", description: "A playable system design lesson: save a ticket site and explain your decisions." },
+  openGraph: { title: "Learnwith | Interactive Tech Lessons", description: "See it, try it, then explain it. Short interactive lessons in system design and Avalanche.", url: "/", siteName: "Learnwith", type: "website" },
+  twitter: { card: "summary", title: "Learnwith | Interactive Tech Lessons", description: "See it, try it, then explain it. Short interactive lessons in system design and Avalanche." },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

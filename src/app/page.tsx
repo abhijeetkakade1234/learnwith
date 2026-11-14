@@ -1,16 +1,15 @@
 import Link from "next/link";
-import TicketDrop from "@/components/TicketDrop";
 
 export default function Home() {
-  return <main className="lab-page">
-    <header className="lab-nav"><Link href="/" className="lab-logo">LEARNWITH<span> / </span>ABHIJEET</Link><span>LEARN BY DOING <b>001</b></span></header>
-    <section className="lab-intro" aria-labelledby="lab-title">
-      <div><p className="lab-eyebrow"><span className="lab-live" /> A PLAYABLE SYSTEM DESIGN LESSON</p><h1 id="lab-title">Save the<br /><em>ticket site.</em></h1></div>
-      <div className="lab-intro-side"><p>50,000 fans arrive at once. Your job is to keep the ticket website working.</p><p>Try a fix, watch what happens, and learn <strong>why</strong> it works. At the end, practise explaining your choices like you would in an interview.</p><a href="#experiment" className="lab-jump">START THE 4-MINUTE LESSON <span aria-hidden="true">↘</span></a></div>
+  return <main className="hub">
+    <header className="hub-nav"><Link href="/" className="hub-brand">LEARNWITH<span> / </span>ABHIJEET</Link><span>LEARN BY DOING</span></header>
+    <section className="hub-main" aria-labelledby="hub-title">
+      <div className="hub-intro"><p className="hub-eyebrow"><span /> CURIOUS MINDS START HERE</p><h1 id="hub-title">Learn it.<br /><em>Explain it.</em></h1><p>Short, interactive lessons that turn difficult tech ideas into something you can see, try, and talk about in an interview.</p></div>
+      <div className="hub-topics" aria-label="Choose a topic">
+        <Link className="hub-topic hub-topic-live" href="/learn/system-design"><span className="hub-topic-top"><span>01 / SYSTEM DESIGN</span><span>START HERE ↗</span></span><span className="hub-topic-name">Save the<br />ticket site.</span><span className="hub-topic-bottom"><span>Traffic surges. Servers fail. Your decisions change what happens.</span><span>PLAY THE LESSON <b aria-hidden="true">↗</b></span></span></Link>
+        <Link className="hub-topic hub-topic-alt" href="/learn/avalanche"><span className="hub-topic-top"><span>02 / AVALANCHE BLOCKCHAIN</span><span>EARLY LESSON ↗</span></span><span className="hub-topic-name">Follow a<br />transaction.</span><span className="hub-topic-bottom"><span>See how a wallet, network, and validators work together.</span><span>EXPLORE THE LESSON <b aria-hidden="true">↗</b></span></span></Link>
+      </div>
     </section>
-    <div className="lab-ticker" aria-label="Lesson flow"><span>01 / SEE IT BREAK</span><span>02 / TRY A FIX</span><span>03 / EXPLAIN IT</span></div>
-    <section id="experiment" className="lab-experiment" aria-label="Interactive ticket drop lesson"><div className="lab-experiment-head"><span>EXPERIMENT 01 / SYSTEM DESIGN</span><span>~ 4 MINUTES · NO ACCOUNT</span></div><TicketDrop /></section>
-    <section className="lab-next"><span>UP NEXT / AVALANCHE</span><h2>What if nobody owns the system?</h2><p>Send a transaction. Watch validators decide what is real.</p><span className="lab-soon">NEXT EXPERIMENT IN DEVELOPMENT <span aria-hidden="true">↗</span></span></section>
-    <footer className="lab-footer"><span>LEARNWITH / ABHIJEET</span><span>BUILT TO MAKE COMPLEX THINGS CLICK.</span></footer>
+    <footer className="hub-footer"><span>NO ACCOUNT NEEDED</span><span>FROM A REEL TO A REAL UNDERSTANDING.</span></footer>
   </main>;
 }
